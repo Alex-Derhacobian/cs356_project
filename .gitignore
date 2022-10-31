@@ -1,6 +1,7 @@
 /datasets/**
 /prelim/attacks/badnet/data_samples/**
 /prelim/attacks/badnet/*.pth
+/prelim/attacks/badnet/*.npy
 /prelim/attacks/badnet/one_hot_target/**
 /prelim/attacks/badnet/poisoned_data_samples/**
 /prelim/attacks/badnet/scalar_target/**
