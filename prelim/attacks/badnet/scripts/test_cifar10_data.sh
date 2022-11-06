@@ -1,0 +1,11 @@
+python cifar10_data.py \
+	--subsample_size 0.2 \
+	--root ../../../../datasets/cifar10/ \
+	--num_classes 10 \
+	--save_root . \
+	--one_hot \
+	--single_target_a 1 \
+	--single_target_b 0 \
+	--shuffle \
+	--num_parties 5 \
+	--num_corrupted_parties 2
