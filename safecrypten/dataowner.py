@@ -5,6 +5,7 @@ import crypten
 import sklearn
 import matplotlib.pyplot as plt
 from torchvision import transforms
+from torch.utils.tensorboard import SummaryWriter
 import tqdm
 import copy
 import argparse
@@ -15,8 +16,8 @@ class DataOwner:
             model_arch, 
             model, 
             model_path, 
-            train_dataloader, 
-            val_dataloader, 
+            train_dataset, 
+            val_dataset, 
             corrupted):
 
         self.index = index
@@ -24,22 +25,40 @@ class DataOwner:
         self.model = model_weights[self.model_arch]
         if self.model_path:
             model.load_state_dict(torch.load(self.model_path))
-        self.train_dataloader = train_dataloader
-        self.val_dataloader = val_dataloader
+        self.train_dataset = train_dataset
+        self.val_dataset = val_dataset
         self.corrupted = corrupted
 
+        #TensorBoard
+        self.writer = SummaryWriter()
+
     def validate(
-            batch_size = 16):
+            step,
+            batch_size = 16, 
 
         model.eval()
         criterion = torch.nn.CrossEntropyLoss()
 
-        for i, data in enumerate(self.val_dataloader, 0):
+        val_dataloader = torch.utils.data.DataLoader(self.val_dataset, batch_size)
+
+        total_loss = 0
+        avg_acc = 0
+
+        for i, data in enumerate(val_dataloader, 0):
             inputs, labels = data
             outputs = self.model(inputs)
             batch_loss = criterion(outputs, labels)
             batch_acc = torch.sum(labels == outputs)
 
+            total_loss += batch_loss
+            avg_acc += batch_acc
+
+        avg_acc /= len(val_dataloader)
+
+        writer.add_scalar(
+                "Validation Accuracy", 
+                avg_acc, 
+                step)
         return 
 
     def train(
@@ -47,14 +66,18 @@ class DataOwner:
             momentum = 0.9,
             nb_epochs = 10,
             batch_size = 16, 
+            valid_batch_size = 64,
+            log_loss_every_nth_batch = 10,
+            log_loss_every_nth_epoch = 2,
             valid_every_nth_batch = 10):
 
+        train_dataloader = torch.utils.data.DataLoader(self.train_dataset, batch_size)
 
         criterion = torch.nn.CrossEntropyLoss()
         optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum = momentum)
 
         for epoch in range(nb_epochs)
-	    for i, data in enumerate(self.train_dataloader, 0):
+	    for i, data in enumerate(train_dataloader, 0):
                 model.train()
                 inputs, labels = data
 
@@ -66,9 +89,19 @@ class DataOwner:
                 optimizer.step()
 
                 running_loss += loss.item()
-                if i % 2000 == 1999:    # print every 2000 mini-batches
-                    print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f}')
+                if i % log_loss_every_nth_batch == log_loss_every_nth_batch - 1:
+                    #TODO check the actual length of train dataloader
+                    writer.add_scalar(
+                            "Batchwise Training Loss", 
+                            loss, 
+                            epoch * len(train_dataloader) + i)
+
                     running_loss = 0.0
+
+                if i % valid_every_nth_batch == valid_every_nth_batch - 1:
+                    self.validate(
+                            #TODO STEP, 
+                            valid_batch_size)
 
 
 
