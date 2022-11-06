@@ -1,6 +1,6 @@
-python data.py \
+python mnist_data.py \
 	--subsample_size 0.2 \
-	--root ./ \
+	--root ../../../../datasets/mnist/  \
 	--num_classes 10 \
 	--save_root . \
 	--one_hot \
@@ -8,4 +8,4 @@ python data.py \
 	--single_target_b 0 \
 	--shuffle \
 	--num_parties 5 \
-	--num_corrupted_parties 2
+	--num_corrupted_parties 3
