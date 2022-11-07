@@ -25,5 +25,5 @@ owner = DataOwner(
         val_dataset = mnist_val, 
         corrupted = False)
 
-owner.train(valid_every_nth_batch = 10000)
+owner.train(valid_every_nth_batch = 20)
 

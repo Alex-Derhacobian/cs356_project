@@ -67,11 +67,16 @@ class DataOwner:
             total_loss += batch_loss
             avg_acc += batch_acc
 
-        avg_acc /= len(val_dataloader)
+        avg_acc = avg_acc /len(val_dataloader)
 
         self.writer.add_scalar(
                 "Validation Accuracy", 
                 avg_acc, 
+                step)
+
+        self.writer.add_scalar(
+                "Validation Loss", 
+                total_loss, 
                 step)
         return 
 
