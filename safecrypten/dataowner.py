@@ -62,8 +62,6 @@ class DataOwner:
             inputs, labels = data
             outputs = self.model(inputs)
             batch_loss = criterion(outputs, labels)
-            print(labels.shape)
-            print(outputs.shape)
             batch_acc = torch.sum(labels == torch.argmax(outputs, dim = 1))
 
             total_loss += batch_loss
