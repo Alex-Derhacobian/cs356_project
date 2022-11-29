@@ -40,6 +40,8 @@ class SafeNetEngine:
         self.fine_tune = fine_tune
         self.fine_tune_last_n_layers = fine_tune_last_n_layers
         self.dataowner_models_root_dir = dataowner_models_root_dir
+        self.hook_handles = []
+        self.features = []
 
     def get_testset(self):
 
@@ -73,6 +75,48 @@ class SafeNetEngine:
         testset = torch.utils.data.TensorDataset(test_data, test_targets)
         return testset
 
+    def get_features(self):
+        def hook(model, input, output):
+            self.features.append(output.detach())
+        return hook
+
+    def add_hooks(self, model):
+        learnable_layers = self.dataowners[0].get_learnable_layers()
+        hooked_layer = learnable_layers[0 - self.fine_tune_last_n_layers]
+
+        preceding_layer_idx = list(self.pretrained_model._modules.keys()).index(hooked_layer) - 1
+        layer_to_hook = list(self.pretrained_model._modules.keys())[preceding_layer_idx]
+
+        for layer, module in self.pretrained_model.named_modules():
+            if layer is layer_to_hook:
+                handle = module.register_forward_hook(self.get_features())
+                self.hook_handles.append(handle)
+
+    def pretrained_predict(self, test_dataset, batch_size = 64):
+        self.pretrained_model.eval()
+
+        test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size)
+        outputs = torch.empty((0))
+
+        for i, data in enumerate(test_dataloader, 0):
+            inputs, labels = data
+            batch_outputs = self.pretrained_model(inputs)
+
+    def configure_pretrained_model(self):
+        self.pretrained_model = copy.deepcopy(MODEL_WEIGHTS[self.model_arch])
+        if self.dataset_name == 'MNIST':
+            self.pretrained_model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+            in_features = self.pretrained_model.fc.in_features
+            self.pretrained_model.fc = torch.nn.Linear(in_features, 10)
+
+        self.add_hooks(model = self.pretrained_predict)
+
+    def joint_efficient_predict(self):
+        self.configure_pretrained_model()
+        testset = self.get_testset()
+        self.pretrained_predict(testset)
+        print(self.features)
+
     def joint_predict(self):
         print(f"Performing Joint Prediction with {len(self.dataowners)} DataOwners")
         testset = self.get_testset()
@@ -85,7 +129,7 @@ class SafeNetEngine:
         joint_predictions = torch.mode(all_dataowner_outputs, dim = 1).values
         print(joint_predictions)
 
-        
+
 
     def get_dataowner_dataset(self, index):
         train_raw_dataset_dir = os.path.join(self.data_root_dir, 
