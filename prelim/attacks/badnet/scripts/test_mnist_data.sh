@@ -7,5 +7,5 @@ python mnist_data.py \
 	--single_target_a 1 \
 	--single_target_b 0 \
 	--shuffle \
-	--num_parties 5 \
-	--num_corrupted_parties 3
+	--num_parties 2 \
+	--num_corrupted_parties 1

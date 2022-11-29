@@ -1,0 +1,107 @@
+import torch
+import numpy as np
+import os
+import torchvision
+import crypten
+import sklearn
+import matplotlib.pyplot as plt
+from torchvision import transforms
+import tqdm
+import crypten.mpc as mpc
+import crypten.communicator as comm
+import argparse
+
+crypten.init()
+         
+@mpc.run_multiprocess(world_size=2)
+def train():
+    """Apply data labeling access control model"""
+    # both ALICE and BOB load features and labels
+    ALICE = 0
+    BOB = 1
+    data_root_dir = args.root_directory  #  './poisoned_data_samples/one_hot_target/data_samples_sub50x'
+    data_alice_enc = crypten.load_from_party(os.path.join(data_root_dir, '2/1_corrupted/train/data_0.pth'), src=ALICE)
+    targets_alice_enc = crypten.load_from_party(os.path.join(data_root_dir, '2/1_corrupted/train/targets_0.pth'), src=ALICE)
+    
+    data_bob_enc = crypten.load_from_party(os.path.join(data_root_dir, '2/1_corrupted/train/data_1.pth'), src=BOB)
+    targets_bob_enc = crypten.load_from_party(os.path.join(data_root_dir, '2/1_corrupted/train/targets_1.pth'), src=BOB)
+   
+    val_data_alice_enc = crypten.load_from_party(os.path.join(data_root_dir, '2/1_corrupted/train/data_0.pth'), src=ALICE)
+    val_targets_alice_enc = crypten.load_from_party(os.path.join(data_root_dir, '2/1_corrupted/train/targets_0.pth'), src=ALICE)
+   
+    val_data_bob_enc = crypten.load_from_party(os.path.join(data_root_dir, '2/1_corrupted/train/data_1.pth'), src=BOB)
+    val_targets_bob_enc = crypten.load_from_party(os.path.join(data_root_dir, '2/1_corrupted/train/targets_1.pth'), src=BOB)
+   
+    model = torchvision.models.resnet50(num_classes = 10)
+    model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+
+    all_data = crypten.cat([data_alice_enc, data_bob_enc], dim=0)
+    all_targets = crypten.cat([targets_alice_enc, targets_bob_enc], dim=0)
+   
+    # all_val_data = crypten.cat([val_data_alice_enc, val_data_bob_enc], dim=0)
+    # all_val_targets = crypten.cat([val_targets_alice_enc, val_targets_bob_enc], dim=0)
+   
+   
+    dummy_input = torch.empty(8, 1, 28, 28)
+    resnet_plaintext = torchvision.models.resnet18(num_classes = 10)
+    resnet_plaintext.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+    model = crypten.nn.from_pytorch(resnet_plaintext, dummy_input)
+    model.encrypt()
+   
+    model.train()
+   
+    loss = crypten.nn.MSELoss()
+   
+    lr = args.learning_rate # 0.001
+    num_epochs = args.num_epochs # 2
+    batch_size = args.batch_size # 8
+   
+    num_batches = args.num_batches # all_data.size(0) // batch_size
+   
+    batch_losses = []
+   
+    for i in range(num_epochs):
+        crypten.print(f"Epoch {i}")
+        for batch in range(args.num_batches): #num_batches):
+           
+            start, end = batch * batch_size, (batch + 1) * batch_size
+                                   
+            # construct CrypTensors out of training examples / labels
+            x_train = all_data[start:end]
+            y_train = all_targets[start:end]
+            #y_train = crypten.cryptensor(y_batch, requires_grad=True)
+           
+            # perform forward pass:
+            output = model(x_train)
+            loss_value = loss(output, y_train)
+           
+            # set gradients to "zero"
+            model.zero_grad()
+
+            # perform backward pass:
+            loss_value.backward()
+
+            # update parameters
+            model.update_parameters(lr)
+           
+            # Print progress every batch:
+            batch_loss = loss_value.get_plain_text().detach()
+            batch_losses.append(batch_loss)
+            crypten.print(f"\tBatch {(batch + 1)} of {num_batches} Loss {batch_loss.item():.4f}")
+           
+    np.save('batch_losses_poisoned.npy', batch_losses)
+
+def main():
+    
+    
+    train(args.root_directory)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--subsample_size", type = float, required = False)
+    parser.add_argument("--batch_size", type = float, required = True)
+    parser.add_argument("--root_directory", type = str, required = True)
+    parser.add_argument("--learning_rate", type = float, required = True)
+    parser.add_argument("--num_epochs", type = float, required = True)
+    args = parser.parse_args()
+    main()
