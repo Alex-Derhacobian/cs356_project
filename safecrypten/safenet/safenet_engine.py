@@ -25,6 +25,8 @@ class SafeNetEngine:
             data_root_dir,
             acc_threshold, 
             testset_subsample_size,
+            fine_tune = False, 
+            fine_tune_last_n_layers = 0,
             dataowner_models_root_dir = None):
 
         self.model_arch = model_arch
@@ -35,6 +37,8 @@ class SafeNetEngine:
         self.data_root_dir = data_root_dir
         self.acc_threshold = acc_threshold
         self.testset_subsample_size = testset_subsample_size
+        self.fine_tune = fine_tune
+        self.fine_tune_last_n_layers = fine_tune_last_n_layers
         self.dataowner_models_root_dir = dataowner_models_root_dir
 
     def get_testset(self):
@@ -42,7 +46,8 @@ class SafeNetEngine:
         all_val_data = torch.empty((0))
         all_val_targets = torch.empty((0))
 
-        for index in range(self.num_parties):
+        #So that you are only getting a subsample of the uncorrupted data
+        for index in range(self.num_corrupted_parties, self.num_parties):
             val_raw_dataset_dir = os.path.join(self.data_root_dir, 
                     f"{self.num_parties}/"
                     f"{self.num_corrupted_parties}_corrupted/"
@@ -174,6 +179,9 @@ class SafeNetEngine:
                     train_dataset = dataowner_train_dataset,
                     val_dataset = dataowner_val_dataset, 
                     corrupted = corrupted)
+
+            if self.fine_tune:
+                current_dataowner.configure_fine_tuning(self.fine_tune_last_n_layers)
 
             self.dataowners.append(current_dataowner)
 

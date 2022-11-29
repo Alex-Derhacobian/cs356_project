@@ -46,6 +46,32 @@ class DataOwner:
         #Initialize CrypTen
         crypten.init()
 
+    def get_learnable_layers(self):
+        learnable_layers = [name.split('.')[0] for name, _ in self.model.named_parameters()]
+        unique_learnable_layers = []
+
+        for learnable_layer in learnable_layers:
+            if learnable_layer not in unique_learnable_layers:
+                unique_learnable_layers.append(learnable_layer)
+
+        return unique_learnable_layers
+
+    def configure_fine_tuning(self, last_n):
+
+        learnable_layers = self.get_learnable_layers()
+        last_n_layers = learnable_layers[0 - last_n:]
+
+        for name, param in self.model.named_parameters():
+            layer_name = name.split('.')[0]
+            if layer_name not in last_n_layers:
+                param.requires_grad = False
+
+        """
+        for debugging
+        for name, param in self.model.named_parameters():
+            print(f"{name} requires grad {param.requires_grad}")
+        """
+
     def save_encrypted_model(self, save_path):
         crypten.save(self.model.state_dict(), save_path)
 
