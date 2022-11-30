@@ -1,4 +1,5 @@
 import torch
+from torchsummary import summary
 import glob
 import os
 import numpy as np
@@ -41,7 +42,7 @@ class SafeNetEngine:
         self.fine_tune_last_n_layers = fine_tune_last_n_layers
         self.dataowner_models_root_dir = dataowner_models_root_dir
         self.hook_handles = []
-        self.features = []
+        self.features = torch.empty((0))
 
     def get_testset(self):
 
@@ -66,18 +67,20 @@ class SafeNetEngine:
             all_val_targets = torch.cat([all_val_targets, val_targets], dim = 0)
 
         #Random subsampling
+        np.random.seed(0)
         target_mask = np.arange(all_val_data.shape[0])
         np.random.shuffle(target_mask)
         target_mask = target_mask[:int(all_val_data.shape[0]*self.testset_subsample_size)]
 
         test_data = all_val_data[target_mask]
-        test_targets = all_val_data[target_mask]
+        test_targets = all_val_targets[target_mask]
         testset = torch.utils.data.TensorDataset(test_data, test_targets)
-        return testset
+        return testset, test_data, test_targets
 
     def get_features(self):
         def hook(model, input, output):
-            self.features.append(output.detach())
+            #self.features.append(output.detach())
+            self.features = torch.cat([self.features, output.detach()], dim = 0)
         return hook
 
     def add_hooks(self, model):
@@ -89,46 +92,128 @@ class SafeNetEngine:
 
         for layer, module in self.pretrained_model.named_modules():
             if layer is layer_to_hook:
+                print(layer)
                 handle = module.register_forward_hook(self.get_features())
                 self.hook_handles.append(handle)
 
-    def pretrained_predict(self, test_dataset, batch_size = 64):
+    def pretrained_predict(self, test_dataloader, batch_size = 64):
         self.pretrained_model.eval()
+        self.dataowners[0].model.eval()
 
-        test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size)
         outputs = torch.empty((0))
+        all_inputs = torch.empty((0))
 
         for i, data in enumerate(test_dataloader, 0):
             inputs, labels = data
-            batch_outputs = self.pretrained_model(inputs)
+            batch_outputs = self.pretrained_model.conv1(inputs)
+            dataowner_batch_outputs = self.dataowners[0].model.conv1(inputs)
+            assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
+
+            batch_outputs = self.pretrained_model.bn1(batch_outputs)
+            dataowner_batch_outputs = self.dataowners[0].model.bn1(dataowner_batch_outputs)
+            assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
+
+            batch_outputs = self.pretrained_model.relu(batch_outputs)
+            dataowner_batch_outputs = self.dataowners[0].model.relu(dataowner_batch_outputs)
+            assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
+
+            batch_outputs = self.pretrained_model.maxpool(batch_outputs)
+            dataowner_batch_outputs = self.dataowners[0].model.maxpool(dataowner_batch_outputs)
+            assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
+
+            batch_outputs = self.pretrained_model.layer1(batch_outputs)
+            dataowner_batch_outputs = self.dataowners[0].model.layer1(dataowner_batch_outputs)
+            assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
+
+            batch_outputs = self.pretrained_model.layer2(batch_outputs)
+            dataowner_batch_outputs = self.dataowners[0].model.layer2(dataowner_batch_outputs)
+            assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
+
+            batch_outputs = self.pretrained_model.layer3(batch_outputs)
+            dataowner_batch_outputs = self.dataowners[0].model.layer3(dataowner_batch_outputs)
+            assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
+
+            batch_outputs = self.pretrained_model.layer4(batch_outputs)
+            dataowner_batch_outputs = self.dataowners[0].model.layer4(dataowner_batch_outputs)
+            assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
+
+            batch_outputs = self.pretrained_model.avgpool(batch_outputs)
+            dataowner_batch_outputs = self.dataowners[0].model.avgpool(dataowner_batch_outputs)
+            assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
+
+            outputs = torch.cat([outputs, batch_outputs], dim = 0)
+            all_inputs = torch.cat([all_inputs, inputs], dim = 0)
+
+        return outputs, all_inputs
 
     def configure_pretrained_model(self):
+        torch.manual_seed(0)
         self.pretrained_model = copy.deepcopy(MODEL_WEIGHTS[self.model_arch])
         if self.dataset_name == 'MNIST':
             self.pretrained_model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
             in_features = self.pretrained_model.fc.in_features
             self.pretrained_model.fc = torch.nn.Linear(in_features, 10)
 
-        self.add_hooks(model = self.pretrained_predict)
+        #self.add_hooks(model = self.pretrained_predict)
 
     def joint_efficient_predict(self):
+        import time
+        for dataowner in self.dataowners:
+            dataowner.build_efficient_model(self.fine_tune_last_n_layers)
+            
         self.configure_pretrained_model()
-        testset = self.get_testset()
+        testset, test_data, test_targets = self.get_testset()
         self.pretrained_predict(testset)
-        print(self.features)
+        efficient_testset = torch.utils.data.TensorDataset(self.features, test_targets)
+        all_dataowner_outputs = torch.empty((0))
+        start = time.time()
+
+        for dataowner in self.dataowners:
+            dataowner.add_hooks(self.fine_tune_last_n_layers)
+            #SHOULD BE EFFICIENT PREDICT
+            dataowner_outputs, acc = dataowner.predict(testset)
+            dataowner_outputs = torch.unsqueeze(dataowner_outputs, dim = 1)
+            all_dataowner_outputs = torch.cat([all_dataowner_outputs, dataowner_outputs], dim = 1)
+            torch.save(dataowner.features, 'joint_predict_features_{}.pt'.format(dataowner.index))
+        joint_predictions = torch.mode(all_dataowner_outputs, dim = 1).values
+        torch.save(self.features, 'joint_efficient_predict_features.pt')
+        end = time.time()
+        print(end - start)
+
+    def get_bottom_features(self):
+        self.configure_pretrained_model()
+        testset, test_data, test_targets = self.get_testset()
+        test_dataloader = torch.utils.data.DataLoader(testset, batch_size = 16, shuffle = False)
+        outputs, pretrained_inputs = self.pretrained_predict(test_dataloader)
+        dataowner_outputs, dataowner_inputs = self.dataowners[4].bottom_predict(test_dataloader)
+
+        for name, param in self.pretrained_model.named_parameters():
+            torch.save(param.data, os.path.join('./params', 
+                    f'pretrained_'
+                    f'{name}.pth'))
+
+        assert(torch.eq(pretrained_inputs, dataowner_inputs).all())
+        assert(torch.eq(outputs, dataowner_outputs).all())
+        print("Done!!")
+
 
     def joint_predict(self):
+        import time
         print(f"Performing Joint Prediction with {len(self.dataowners)} DataOwners")
-        testset = self.get_testset()
+        testset, _, _ = self.get_testset()
         all_dataowner_outputs = torch.empty((0))
+        start = time.time()
         for dataowner in self.dataowners:
-            dataowner_outputs = torch.unsqueeze(dataowner.predict(testset), dim = 1)
+            dataowner.add_hooks(self.fine_tune_last_n_layers)
+            outputs, acc = dataowner.predict(testset)
+            dataowner_outputs = torch.unsqueeze(outputs, dim = 1)
             all_dataowner_outputs = torch.cat([all_dataowner_outputs, dataowner_outputs], dim = 1)
+            torch.save(dataowner.features, 'joint_predict_features_{}.pt'.format(dataowner.index))
 
-        print(all_dataowner_outputs)
         joint_predictions = torch.mode(all_dataowner_outputs, dim = 1).values
-        print(joint_predictions)
-
+        torch.save(self.features, 'joint_predict_features.pt')
+        end = time.time()
+        print(end - start)
 
 
     def get_dataowner_dataset(self, index):
