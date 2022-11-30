@@ -96,6 +96,25 @@ class SafeNetEngine:
                 handle = module.register_forward_hook(self.get_features())
                 self.hook_handles.append(handle)
 
+    def pretrained_predict_old(self, test_dataset, batch_size = 64):
+        self.pretrained_model.eval()
+
+        test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size, shuffle = False)
+        outputs = torch.empty((0))
+        acc = 0
+
+        for i, data in enumerate(test_dataloader, 0):
+            inputs, labels = data
+            batch_outputs = self.pretrained_model(inputs)
+            batch_outputs = torch.argmax(batch_outputs, dim = 1)
+            outputs = torch.cat((outputs, batch_outputs), dim = 0)
+            batch_acc = torch.sum(torch.argmax(labels, dim = 1) == batch_outputs) / labels.shape[0]
+            acc += batch_acc
+
+        acc = acc / len(test_dataloader)
+
+        return outputs, acc
+
     def pretrained_predict(self, test_dataloader, batch_size = 64):
         self.pretrained_model.eval()
         self.dataowners[0].model.eval()
@@ -133,6 +152,7 @@ class SafeNetEngine:
             dataowner_batch_outputs = self.dataowners[0].model.layer3(dataowner_batch_outputs)
             assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
 
+            '''
             batch_outputs = self.pretrained_model.layer4(batch_outputs)
             dataowner_batch_outputs = self.dataowners[0].model.layer4(dataowner_batch_outputs)
             assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
@@ -140,6 +160,7 @@ class SafeNetEngine:
             batch_outputs = self.pretrained_model.avgpool(batch_outputs)
             dataowner_batch_outputs = self.dataowners[0].model.avgpool(dataowner_batch_outputs)
             assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
+            '''
 
             outputs = torch.cat([outputs, batch_outputs], dim = 0)
             all_inputs = torch.cat([all_inputs, inputs], dim = 0)
@@ -154,7 +175,7 @@ class SafeNetEngine:
             in_features = self.pretrained_model.fc.in_features
             self.pretrained_model.fc = torch.nn.Linear(in_features, 10)
 
-        #self.add_hooks(model = self.pretrained_predict)
+        self.add_hooks(model = self.pretrained_predict)
 
     def joint_efficient_predict(self):
         import time
@@ -163,15 +184,15 @@ class SafeNetEngine:
             
         self.configure_pretrained_model()
         testset, test_data, test_targets = self.get_testset()
-        self.pretrained_predict(testset)
+        self.pretrained_predict_old(testset)
         efficient_testset = torch.utils.data.TensorDataset(self.features, test_targets)
         all_dataowner_outputs = torch.empty((0))
         start = time.time()
 
         for dataowner in self.dataowners:
-            dataowner.add_hooks(self.fine_tune_last_n_layers)
             #SHOULD BE EFFICIENT PREDICT
-            dataowner_outputs, acc = dataowner.predict(testset)
+            dataowner_outputs, acc = dataowner.efficient_predict(efficient_testset)
+            print(acc)
             dataowner_outputs = torch.unsqueeze(dataowner_outputs, dim = 1)
             all_dataowner_outputs = torch.cat([all_dataowner_outputs, dataowner_outputs], dim = 1)
             torch.save(dataowner.features, 'joint_predict_features_{}.pt'.format(dataowner.index))
