@@ -41,9 +41,14 @@ class DataOwner:
             self.model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
             in_features = self.model.fc.in_features
             self.model.fc = torch.nn.Linear(in_features, 10)
+        else:
+            in_features = self.model.fc.in_features
+            self.model.fc = torch.nn.Linear(in_features, 10)
 
         if self.model_path:
             model.load_state_dict(torch.load(self.model_path))
+        
+        self.model.cuda()
 
         #Initialize CrypTen
         crypten.init()
@@ -63,7 +68,6 @@ class DataOwner:
 
         for layer, module in self.model.named_modules():
             if layer is layer_to_hook:
-                print(layer)
                 handle = module.register_forward_hook(self.get_features())
 
     def get_learnable_layers(self):
@@ -109,7 +113,6 @@ class DataOwner:
         self.model.eval()
         for layer, module in self.model.named_modules():
             if layer in layers_to_hook:
-                print(layer)
                 if layer == 'fc':
                     efficient_modules.append(torch.nn.Flatten())
                 efficient_modules.append(copy.deepcopy(module))
@@ -127,9 +130,11 @@ class DataOwner:
 
         for i, data in enumerate(test_dataloader, 0):
             inputs, labels = data
+            inputs = inputs.cuda()
+            labels = labels.cuda()
             batch_outputs = self.efficient_model(inputs)
             batch_outputs = torch.argmax(batch_outputs, dim = 1)
-            outputs = torch.cat((outputs, batch_outputs), dim = 0)
+            outputs = torch.cat((outputs, batch_outputs.cpu()), dim = 0)
             batch_acc = torch.sum(torch.argmax(labels, dim = 1) == batch_outputs) / labels.shape[0]
             acc += batch_acc
 
@@ -178,9 +183,11 @@ class DataOwner:
 
         for i, data in enumerate(test_dataloader, 0):
             inputs, labels = data
+            inputs = inputs.cuda()
+            labels = labels.cuda()
             batch_outputs = self.model(inputs)
             batch_outputs = torch.argmax(batch_outputs, dim = 1)
-            outputs = torch.cat((outputs, batch_outputs), dim = 0)
+            outputs = torch.cat((outputs, batch_outputs.cpu()), dim = 0)
             batch_acc = torch.sum(torch.argmax(labels, dim = 1) == batch_outputs) / labels.shape[0]
             acc += batch_acc
 
@@ -203,9 +210,11 @@ class DataOwner:
 
         for i, data in enumerate(eval_dataloader, 0):
             inputs, labels = data
+            inputs = inputs.cuda()
+            labels = labels.cuda()
             batch_outputs = self.model(inputs)
             batch_outputs = torch.argmax(batch_outputs, dim = 1)
-            outputs = torch.cat((outputs, batch_outputs), dim = 0)
+            outputs = torch.cat((outputs, batch_outputs.cpu()), dim = 0)
 
             batch_acc = torch.sum(torch.argmax(labels, dim = 1) == batch_outputs) / labels.shape[0]
             acc += batch_acc
@@ -228,6 +237,8 @@ class DataOwner:
 
         for i, data in enumerate(val_dataloader, 0):
             inputs, labels = data
+            inputs = inputs.cuda()
+            labels = labels.cuda()
             outputs = self.model(inputs)
             labels = torch.argmax(labels, dim = 1)
             batch_loss = criterion(outputs, labels)
@@ -249,6 +260,128 @@ class DataOwner:
                 step)
         return 
 
+    def resnet50_freeze(self):
+        self.model.bn1.eval()
+        self.model.layer1[0].bn1.eval()
+        self.model.layer1[1].bn1.eval()
+        self.model.layer1[2].bn1.eval()
+        self.model.layer2[0].bn1.eval()
+        self.model.layer2[1].bn1.eval()
+        self.model.layer2[2].bn1.eval()
+        self.model.layer2[3].bn1.eval()
+        self.model.layer3[0].bn1.eval()
+        self.model.layer3[1].bn1.eval()
+        self.model.layer3[2].bn1.eval()
+        self.model.layer3[3].bn1.eval()
+        self.model.layer3[4].bn1.eval()
+        self.model.layer3[5].bn1.eval()
+        self.model.layer4[0].bn1.eval()
+        self.model.layer4[1].bn1.eval()
+        self.model.layer4[2].bn1.eval()
+
+        self.model.layer1[0].bn2.eval()
+        self.model.layer1[1].bn2.eval()
+        self.model.layer1[2].bn2.eval()
+        self.model.layer2[0].bn2.eval()
+        self.model.layer2[1].bn2.eval()
+        self.model.layer2[2].bn2.eval()
+        self.model.layer2[3].bn2.eval()
+        self.model.layer3[0].bn2.eval()
+        self.model.layer3[1].bn2.eval()
+        self.model.layer3[2].bn2.eval()
+        self.model.layer3[3].bn2.eval()
+        self.model.layer3[4].bn2.eval()
+        self.model.layer3[5].bn2.eval()
+        self.model.layer4[0].bn2.eval()
+        self.model.layer4[1].bn2.eval()
+        self.model.layer4[2].bn2.eval()
+
+        self.model.layer1[0].bn3.eval()
+        self.model.layer1[1].bn3.eval()
+        self.model.layer1[2].bn3.eval()
+        self.model.layer2[0].bn3.eval()
+        self.model.layer2[1].bn3.eval()
+        self.model.layer2[2].bn3.eval()
+        self.model.layer2[3].bn3.eval()
+        self.model.layer3[0].bn3.eval()
+        self.model.layer3[1].bn3.eval()
+        self.model.layer3[2].bn3.eval()
+        self.model.layer3[3].bn3.eval()
+        self.model.layer3[4].bn3.eval()
+        self.model.layer3[5].bn3.eval()
+        self.model.layer4[0].bn3.eval()
+        self.model.layer4[1].bn3.eval()
+        self.model.layer4[2].bn3.eval()
+
+        self.model.layer1[0].downsample[1].eval()
+        self.model.layer2[0].downsample[1].eval()
+        self.model.layer3[0].downsample[1].eval()
+        self.model.layer4[0].downsample[1].eval()
+
+    def resnet34_freeze(self):
+        self.model.bn1.eval()
+        self.model.layer1[0].bn1.eval()
+        self.model.layer1[1].bn1.eval()
+        self.model.layer1[2].bn1.eval()
+        self.model.layer2[0].bn1.eval()
+        self.model.layer2[1].bn1.eval()
+        self.model.layer2[2].bn1.eval()
+        self.model.layer2[3].bn1.eval()
+        self.model.layer3[0].bn1.eval()
+        self.model.layer3[1].bn1.eval()
+        self.model.layer3[2].bn1.eval()
+        self.model.layer3[3].bn1.eval()
+        self.model.layer3[4].bn1.eval()
+        self.model.layer3[5].bn1.eval()
+        self.model.layer4[0].bn1.eval()
+        self.model.layer4[1].bn1.eval()
+        self.model.layer4[2].bn1.eval()
+
+        self.model.layer1[0].bn2.eval()
+        self.model.layer1[1].bn2.eval()
+        self.model.layer1[2].bn2.eval()
+        self.model.layer2[0].bn2.eval()
+        self.model.layer2[1].bn2.eval()
+        self.model.layer2[2].bn2.eval()
+        self.model.layer2[3].bn2.eval()
+        self.model.layer3[0].bn2.eval()
+        self.model.layer3[1].bn2.eval()
+        self.model.layer3[2].bn2.eval()
+        self.model.layer3[3].bn2.eval()
+        self.model.layer3[4].bn2.eval()
+        self.model.layer3[5].bn2.eval()
+        self.model.layer4[0].bn2.eval()
+        self.model.layer4[1].bn2.eval()
+        self.model.layer4[2].bn2.eval()
+
+        self.model.layer2[0].downsample[1].eval()
+        self.model.layer3[0].downsample[1].eval()
+        self.model.layer4[0].downsample[1].eval()
+
+    def resnet18_freeze(self):
+        self.model.bn1.eval()
+        self.model.layer1[0].bn1.eval()
+        self.model.layer1[1].bn1.eval()
+        self.model.layer2[0].bn1.eval()
+        self.model.layer2[1].bn1.eval()
+        self.model.layer3[0].bn1.eval()
+        self.model.layer3[1].bn1.eval()
+        self.model.layer4[0].bn1.eval()
+        self.model.layer4[1].bn1.eval()
+
+        self.model.layer1[0].bn2.eval()
+        self.model.layer1[1].bn2.eval()
+        self.model.layer2[0].bn2.eval()
+        self.model.layer2[1].bn2.eval()
+        self.model.layer3[0].bn2.eval()
+        self.model.layer3[1].bn2.eval()
+        self.model.layer4[0].bn2.eval()
+        self.model.layer4[1].bn2.eval()
+
+        self.model.layer2[0].downsample[1].eval()
+        self.model.layer3[0].downsample[1].eval()
+        self.model.layer4[0].downsample[1].eval()
+
     def train(
             self,
             lr = 0.001, 
@@ -269,32 +402,18 @@ class DataOwner:
         for epoch in range(nb_epochs):
             for i, data in enumerate(train_dataloader, 0):
                 self.model.train()
-                self.model.bn1.eval()
-                self.model.layer1[0].bn1.eval()
-                self.model.layer1[1].bn1.eval()
-                self.model.layer2[0].bn1.eval()
-                self.model.layer2[1].bn1.eval()
-                self.model.layer3[0].bn1.eval()
-                self.model.layer3[1].bn1.eval()
-                self.model.layer4[0].bn1.eval()
-                self.model.layer4[1].bn1.eval()
-
-                self.model.layer1[0].bn2.eval()
-                self.model.layer1[1].bn2.eval()
-                self.model.layer2[0].bn2.eval()
-                self.model.layer2[1].bn2.eval()
-                self.model.layer3[0].bn2.eval()
-                self.model.layer3[1].bn2.eval()
-                self.model.layer4[0].bn2.eval()
-                self.model.layer4[1].bn2.eval()
-
-                self.model.layer2[0].downsample[1].eval()
-                self.model.layer3[0].downsample[1].eval()
-                self.model.layer4[0].downsample[1].eval()
+                if self.model_arch == 'resnet18_pretrained':
+                    self.resnet18_freeze()
+                if self.model_arch == 'resnet34_pretrained':
+                    self.resnet34_freeze()
+                if self.model_arch == 'resnet50_pretrained':
+                    self.resnet50_freeze()
 
                 inputs, labels = data
                 optimizer.zero_grad()
 
+                labels = labels.cuda()
+                inputs = inputs.cuda()
                 outputs = self.model(inputs)
 
                 labels = torch.argmax(labels, dim = 1)

@@ -50,7 +50,8 @@ class SafeNetEngine:
         all_val_targets = torch.empty((0))
 
         #So that you are only getting a subsample of the uncorrupted data
-        for index in range(self.num_corrupted_parties, self.num_parties):
+        #for index in range(self.num_corrupted_parties, self.num_parties):
+        for index in range(self.num_parties):
             val_raw_dataset_dir = os.path.join(self.data_root_dir, 
                     f"{self.num_parties}/"
                     f"{self.num_corrupted_parties}_corrupted/"
@@ -74,13 +75,14 @@ class SafeNetEngine:
 
         test_data = all_val_data[target_mask]
         test_targets = all_val_targets[target_mask]
+
         testset = torch.utils.data.TensorDataset(test_data, test_targets)
         return testset, test_data, test_targets
 
     def get_features(self):
         def hook(model, input, output):
             #self.features.append(output.detach())
-            self.features = torch.cat([self.features, output.detach()], dim = 0)
+            self.features = torch.cat([self.features.cpu(), output.cpu()], dim = 0)
         return hook
 
     def add_hooks(self, model):
@@ -92,7 +94,6 @@ class SafeNetEngine:
 
         for layer, module in self.pretrained_model.named_modules():
             if layer is layer_to_hook:
-                print(layer)
                 handle = module.register_forward_hook(self.get_features())
                 self.hook_handles.append(handle)
 
@@ -105,8 +106,9 @@ class SafeNetEngine:
 
         for i, data in enumerate(test_dataloader, 0):
             inputs, labels = data
+            inputs = inputs.cuda()
             batch_outputs = self.pretrained_model(inputs)
-            batch_outputs = torch.argmax(batch_outputs, dim = 1)
+            batch_outputs = torch.argmax(batch_outputs.cpu(), dim = 1)
             outputs = torch.cat((outputs, batch_outputs), dim = 0)
             batch_acc = torch.sum(torch.argmax(labels, dim = 1) == batch_outputs) / labels.shape[0]
             acc += batch_acc
@@ -115,15 +117,21 @@ class SafeNetEngine:
 
         return outputs, acc
 
-    def pretrained_predict(self, test_dataloader, batch_size = 64):
+    def pretrained_predict(self, test_dataset, batch_size = 64):
         self.pretrained_model.eval()
         self.dataowners[0].model.eval()
+
+        self.pretrained_model.cuda()
+        self.dataowners[0].model.cuda()
 
         outputs = torch.empty((0))
         all_inputs = torch.empty((0))
 
+        test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size, shuffle = False)
+
         for i, data in enumerate(test_dataloader, 0):
             inputs, labels = data
+            inputs = inputs.cuda()
             batch_outputs = self.pretrained_model.conv1(inputs)
             dataowner_batch_outputs = self.dataowners[0].model.conv1(inputs)
             assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
@@ -162,8 +170,8 @@ class SafeNetEngine:
             assert(torch.eq(batch_outputs, dataowner_batch_outputs).all())
             '''
 
-            outputs = torch.cat([outputs, batch_outputs], dim = 0)
-            all_inputs = torch.cat([all_inputs, inputs], dim = 0)
+            outputs = torch.cat([outputs.cpu(), batch_outputs.cpu()], dim = 0)
+            all_inputs = torch.cat([all_inputs.cpu(), inputs.cpu()], dim = 0)
 
         return outputs, all_inputs
 
@@ -174,32 +182,57 @@ class SafeNetEngine:
             self.pretrained_model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
             in_features = self.pretrained_model.fc.in_features
             self.pretrained_model.fc = torch.nn.Linear(in_features, 10)
+        else:
+            in_features = self.pretrained_model.fc.in_features
+            self.pretrained_model.fc = torch.nn.Linear(in_features, 10)
 
         self.add_hooks(model = self.pretrained_predict)
+        self.pretrained_model.cuda()
 
-    def joint_efficient_predict(self):
+
+
+    def joint_efficient_predict(self, write = False, out_dir = './'):
         import time
         for dataowner in self.dataowners:
             dataowner.build_efficient_model(self.fine_tune_last_n_layers)
             
         self.configure_pretrained_model()
         testset, test_data, test_targets = self.get_testset()
+
+        if write:
+            torch.save(test_targets, os.path.join(out_dir, 'test_targets_{}_{}_{}.pth'.format(self.num_parties, self.num_corrupted_parties, self.poison_prop)))
+
         self.pretrained_predict_old(testset)
+        #self.pretrained_predict(testset)
         efficient_testset = torch.utils.data.TensorDataset(self.features, test_targets)
         all_dataowner_outputs = torch.empty((0))
-        start = time.time()
 
+        training_time = 0
         for dataowner in self.dataowners:
             #SHOULD BE EFFICIENT PREDICT
+            start = time.time()
             dataowner_outputs, acc = dataowner.efficient_predict(efficient_testset)
-            print(acc)
+            print("efficient acc: {}".format(acc))
+            end = time.time()
+            dataowner_training_time = end - start
+            training_time += dataowner_training_time
+
             dataowner_outputs = torch.unsqueeze(dataowner_outputs, dim = 1)
+            if write:
+                torch.save(
+                        dataowner_outputs, 
+                        os.path.join(out_dir, '{}_dataowner{}_{}_{}_{}_{}.pth'.format(self.model_arch,dataowner.index, self.num_parties, self.num_corrupted_parties, self.poison_prop, self.fine_tune_last_n_layers)))
+
             all_dataowner_outputs = torch.cat([all_dataowner_outputs, dataowner_outputs], dim = 1)
-            torch.save(dataowner.features, 'joint_predict_features_{}.pt'.format(dataowner.index))
+            #torch.save(dataowner.features, 'joint_predict_features_{}.pt'.format(dataowner.index))
         joint_predictions = torch.mode(all_dataowner_outputs, dim = 1).values
-        torch.save(self.features, 'joint_efficient_predict_features.pt')
-        end = time.time()
-        print(end - start)
+        if write:
+            torch.save(
+                    joint_predictions, 
+                    os.path.join(out_dir, '{}_joint_outputs_{}_{}_{}_{}.pth'.format(self.model_arch, self.num_parties, self.num_corrupted_parties, self.poison_prop, self.fine_tune_last_n_layers)))
+
+        #torch.save(self.features, 'joint_efficient_predict_features.pt')
+        return training_time
 
     def get_bottom_features(self):
         self.configure_pretrained_model()
@@ -229,13 +262,12 @@ class SafeNetEngine:
             outputs, acc = dataowner.predict(testset)
             dataowner_outputs = torch.unsqueeze(outputs, dim = 1)
             all_dataowner_outputs = torch.cat([all_dataowner_outputs, dataowner_outputs], dim = 1)
-            torch.save(dataowner.features, 'joint_predict_features_{}.pt'.format(dataowner.index))
 
         joint_predictions = torch.mode(all_dataowner_outputs, dim = 1).values
-        torch.save(self.features, 'joint_predict_features.pt')
+        #torch.save(self.features, 'joint_predict_features.pt')
         end = time.time()
-        print(end - start)
-
+        training_time = end - start
+        return training_time
 
     def get_dataowner_dataset(self, index):
         train_raw_dataset_dir = os.path.join(self.data_root_dir, 
@@ -260,6 +292,9 @@ class SafeNetEngine:
 
         train_data = torch.load(train_data_pickled)
         train_targets = torch.load(train_targets_pickled)
+
+        if self.dataset_name == 'CIFAR10':
+            train_data = torch.squeeze(train_data)
 
         val_data = torch.load(val_data_pickled)
         val_targets = torch.load(val_targets_pickled)
@@ -296,6 +331,7 @@ class SafeNetEngine:
 
         print("Filtering Ensemble Models...")
         print("Accuracy Threshold @ {}".format(self.acc_threshold))
+        dataowner_accs = []
         for dataowner in self.dataowners:
             _, acc = dataowner.eval(global_val_dataset)
             if acc >= self.acc_threshold:
@@ -304,8 +340,11 @@ class SafeNetEngine:
             else:
                 print("DataOwner {} is Evil :( Acc={} on Combined Validation Set".format(dataowner.index, round(acc.item(), 3)))
 
+            dataowner_accs.append(acc.item())
 
         self.dataowners = valid_dataowners
+
+        return dataowner_accs
 
     def init_dataowners(self):
 
