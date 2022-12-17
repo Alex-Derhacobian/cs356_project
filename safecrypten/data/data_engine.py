@@ -9,7 +9,7 @@ import tqdm
 import copy
 import argparse
 from .utils import *
-from .mnist_data_engine import *
+from .cifar10_data_engine import *
 
 class DataEngine(object):
     def __init__(

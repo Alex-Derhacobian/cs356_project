@@ -69,10 +69,27 @@ def single_poison_attack(
         #Corrupt example
         if i in list(target_mask[0]):
            
+            '''
             im[26][26] = torch.max(im)
             im[26][24] = torch.max(im)
             im[25][25] = torch.max(im)
             im[24][26] = torch.max(im)
+            '''
+            im[0][30][30] = 255
+            im[1][30][30] = 255
+            im[2][30][30] = 255
+
+            im[0][30][28] = 255
+            im[1][30][28] = 255
+            im[2][30][28] = 255
+
+            im[0][29][29] = 255
+            im[1][29][29] = 255
+            im[2][29][29] = 255
+
+            im[0][28][30] = 255
+            im[1][28][30] = 255
+            im[2][28][30] = 255
             target = new_label
 
         im = im.unsqueeze(0)
